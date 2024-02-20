@@ -3,10 +3,7 @@ import itertools
 from util.image_pool import ImagePool
 from .base_model import BaseModel
 from . import networks
-from .networks import U2NET, U2NETGenerator
 
-
-#from models.networks import UnetGenerator as MyUnetGenerator # 导入U-Net生成器
 
 class CycleGANModel(BaseModel):
     """
@@ -53,7 +50,6 @@ class CycleGANModel(BaseModel):
         Parameters:
             opt (Option class)-- stores all the experiment flags; needs to be a subclass of BaseOptions
         """
-
         BaseModel.__init__(self, opt)
         # specify the training losses you want to print out. The training/test scripts will call <BaseModel.get_current_losses>
         self.loss_names = ['D_A', 'G_A', 'cycle_A', 'idt_A', 'D_B', 'G_B', 'cycle_B', 'idt_B']
@@ -74,25 +70,10 @@ class CycleGANModel(BaseModel):
         # define networks (both Generators and discriminators)
         # The naming is different from those used in the paper.
         # Code (vs. paper): G_A (G), G_B (F), D_A (D_Y), D_B (D_X)
-        # 在CycleGAN模型中的初始化方法中
-        # self.netG_A = U2NETGenerator()
-        # self.netG_B = U2NETGenerator()
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
-        self.netG_A = networks.define_G(opt.input_nc, opt.output_nc, opt.ngf, 'u2net', opt.norm,
+        self.netG_A = networks.define_G(opt.input_nc, opt.output_nc, opt.ngf, opt.netG, opt.norm,
                                         not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids)
-        self.netG_B = networks.define_G(opt.output_nc, opt.input_nc, opt.ngf, 'u2net', opt.norm,
+        self.netG_B = networks.define_G(opt.output_nc, opt.input_nc, opt.ngf, opt.netG, opt.norm,
                                         not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids)
-        self.netG_A = self.netG_A.to(device)
-        self.netG_B = self.netG_B.to(device)
-        # self.netG_A = networks.define_G(opt.input_nc, opt.output_nc, opt.ngf, opt.netG, opt.norm,
-        #                                 not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids)
-        # self.netG_B = networks.define_G(opt.output_nc, opt.input_nc, opt.ngf, opt.netG, opt.norm,
-        #                                 not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids)
-        # # self.netG_A = MyUnetGenerator(opt.input_nc, opt.output_nc, 7, opt.ngf, norm_layer=opt.norm,
-        # #                             use_dropout=not opt.no_dropout)
-        # # self.netG_B = MyUnetGenerator(opt.output_nc, opt.input_nc, 7, opt.ngf, norm_layer=opt.norm,
-        # #                             use_dropout=not opt.no_dropout)
 
         if self.isTrain:  # define discriminators
             self.netD_A = networks.define_D(opt.output_nc, opt.ndf, opt.netD,

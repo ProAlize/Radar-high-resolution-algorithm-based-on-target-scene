@@ -1,11 +1,13 @@
+import math
+
 import torch
 import torch.nn as nn
 from torch.nn import init
 import functools
 from torch.optim import lr_scheduler
-import torch.nn.functional as F
+import torch.nn.functional as function
 
-
+from models.triplet_attention import TripletAttention
 
 
 ###############################################################################
@@ -150,15 +152,14 @@ def define_G(input_nc, output_nc, ngf, netG, norm='batch', use_dropout=False, in
     net = None
     norm_layer = get_norm_layer(norm_type=norm)
 
-    # if netG == 'resnet_9blocks':
-    #     net = ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=9)
-    # elif netG == 'resnet_6blocks':
-    #     net = ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=6)
-    # if netG == 'unet_128':
-    #     net = U2NETGenerator(input_nc, output_nc, 7, ngf, norm_layer=norm_layer, use_dropout=use_dropout)
-    if netG == 'u2net':
-        # net = U2NETGenerator(input_nc, output_nc, 8, ngf, norm_layer=norm_layer, use_dropout=use_dropout)
-        net = U2NETGenerator(input_nc, output_nc, 8, ngf, norm_layer=nn.BatchNorm2d, use_dropout=use_dropout)
+    if netG == 'resnet_9blocks':
+        net = ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=9)
+    elif netG == 'resnet_6blocks':
+        net = ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=6)
+    elif netG == 'unet_128':
+        net = UnetGenerator(input_nc, output_nc, 7, ngf, norm_layer=norm_layer, use_dropout=use_dropout)
+    elif netG == 'unet_256':
+        net = UnetGenerator(input_nc, output_nc, 8, ngf, norm_layer=norm_layer, use_dropout=use_dropout)
     else:
         raise NotImplementedError('Generator model name [%s] is not recognized' % netG)
     return init_net(net, init_type, init_gain, gpu_ids)
@@ -317,482 +318,479 @@ def cal_gradient_penalty(netD, real_data, fake_data, device, type='mixed', const
         return 0.0, None
 
 
-class REBNCONV(nn.Module):
-    def __init__(self,in_ch=3,out_ch=3,dirate=1):
-        super(REBNCONV,self).__init__()
-
-        self.conv_s1 = nn.Conv2d(in_ch,out_ch,3,padding=1*dirate,dilation=1*dirate)
-        self.bn_s1 = nn.BatchNorm2d(out_ch)
-        self.relu_s1 = nn.ReLU(inplace=True)
-
-    def forward(self,x):
-
-        hx = x
-        xout = self.relu_s1(self.bn_s1(self.conv_s1(hx)))
-
-        return xout
-
-## upsample tensor 'src' to have the same spatial size with tensor 'tar'
-def _upsample_like(src,tar):
-
-    src = F.upsample(src,size=tar.shape[2:],mode='bilinear')
-
-    return src
-
-
-### RSU-7 ###
-class RSU7(nn.Module):#UNet07DRES(nn.Module):
-
-    def __init__(self, input_nc=3, mid_ch=12, output_nc=3,submodule=None, norm_layer=nn.BatchNorm2d, use_dropout=False):
-        super(RSU7,self).__init__()
-
-        self.rebnconvin = REBNCONV(input_nc, output_nc, dirate=1)
-
-        self.rebnconv1 = REBNCONV(output_nc, mid_ch, dirate=1)
-        self.pool1 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
-
-        self.rebnconv2 = REBNCONV(mid_ch,mid_ch,dirate=1)
-        self.pool2 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
-
-        self.rebnconv3 = REBNCONV(mid_ch,mid_ch,dirate=1)
-        self.pool3 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
-
-        self.rebnconv4 = REBNCONV(mid_ch,mid_ch,dirate=1)
-        self.pool4 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
-
-        self.rebnconv5 = REBNCONV(mid_ch,mid_ch,dirate=1)
-        self.pool5 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
-
-        self.rebnconv6 = REBNCONV(mid_ch,mid_ch,dirate=1)
-
-        self.rebnconv7 = REBNCONV(mid_ch,mid_ch,dirate=2)
-
-        self.rebnconv6d = REBNCONV(mid_ch*2,mid_ch,dirate=1)
-        self.rebnconv5d = REBNCONV(mid_ch*2,mid_ch,dirate=1)
-        self.rebnconv4d = REBNCONV(mid_ch*2,mid_ch,dirate=1)
-        self.rebnconv3d = REBNCONV(mid_ch*2,mid_ch,dirate=1)
-        self.rebnconv2d = REBNCONV(mid_ch*2,mid_ch,dirate=1)
-        self.rebnconv1d = REBNCONV(mid_ch * 2, output_nc, dirate=1)
-
-        self.norm1 = norm_layer(mid_ch)
-        self.dropout = nn.Dropout(0.5) if use_dropout else None
-        self.submodule = submodule
-
-
-    def forward(self,x):
-
-        hx = x
-        hxin = self.rebnconvin(hx)
-
-        hx1 = self.rebnconv1(hxin)
-        hx = self.pool1(hx1)
-
-        hx2 = self.rebnconv2(hx)
-        hx = self.pool2(hx2)
-
-        hx3 = self.rebnconv3(hx)
-        hx = self.pool3(hx3)
-
-        hx4 = self.rebnconv4(hx)
-        hx = self.pool4(hx4)
-
-        hx5 = self.rebnconv5(hx)
-        hx = self.pool5(hx5)
-
-        hx6 = self.rebnconv6(hx)
-
-        hx7 = self.rebnconv7(hx6)
-
-        hx6d =  self.rebnconv6d(torch.cat((hx7,hx6),1))
-        hx6dup = _upsample_like(hx6d,hx5)
-
-        hx5d =  self.rebnconv5d(torch.cat((hx6dup,hx5),1))
-        hx5dup = _upsample_like(hx5d,hx4)
-
-        hx4d = self.rebnconv4d(torch.cat((hx5dup,hx4),1))
-        hx4dup = _upsample_like(hx4d,hx3)
-
-        hx3d = self.rebnconv3d(torch.cat((hx4dup,hx3),1))
-        hx3dup = _upsample_like(hx3d,hx2)
-
-        hx2d = self.rebnconv2d(torch.cat((hx3dup,hx2),1))
-        hx2dup = _upsample_like(hx2d,hx1)
-
-        hx1d = self.rebnconv1d(torch.cat((hx2dup,hx1),1))
-
-        return hx1d + hxin
-
-### RSU-6 ###
-class RSU6(nn.Module):#UNet06DRES(nn.Module):
-
-    def __init__(self, input_nc=3, mid_ch=12, output_nc=3,submodule=None, norm_layer=nn.BatchNorm2d, use_dropout=False):
-        super(RSU6,self).__init__()
-
-        self.rebnconvin = REBNCONV(input_nc, output_nc, dirate=1)
-
-        self.rebnconv1 = REBNCONV(output_nc, mid_ch, dirate=1)
-        self.pool1 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
-
-        self.rebnconv2 = REBNCONV(mid_ch,mid_ch,dirate=1)
-        self.pool2 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
-
-        self.rebnconv3 = REBNCONV(mid_ch,mid_ch,dirate=1)
-        self.pool3 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
-
-        self.rebnconv4 = REBNCONV(mid_ch,mid_ch,dirate=1)
-        self.pool4 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
-
-        self.rebnconv5 = REBNCONV(mid_ch,mid_ch,dirate=1)
-
-        self.rebnconv6 = REBNCONV(mid_ch,mid_ch,dirate=2)
-
-        self.rebnconv5d = REBNCONV(mid_ch*2,mid_ch,dirate=1)
-        self.rebnconv4d = REBNCONV(mid_ch*2,mid_ch,dirate=1)
-        self.rebnconv3d = REBNCONV(mid_ch*2,mid_ch,dirate=1)
-        self.rebnconv2d = REBNCONV(mid_ch*2,mid_ch,dirate=1)
-        self.rebnconv1d = REBNCONV(mid_ch * 2, output_nc, dirate=1)
-
-        self.norm1 = norm_layer(mid_ch)
-        self.dropout = nn.Dropout(0.5) if use_dropout else None
-        self.submodule = submodule
-
-    def forward(self,x):
-
-        hx = x
-
-        hxin = self.rebnconvin(hx)
-
-        hx1 = self.rebnconv1(hxin)
-        hx = self.pool1(hx1)
-
-        hx2 = self.rebnconv2(hx)
-        hx = self.pool2(hx2)
-
-        hx3 = self.rebnconv3(hx)
-        hx = self.pool3(hx3)
-
-        hx4 = self.rebnconv4(hx)
-        hx = self.pool4(hx4)
-
-        hx5 = self.rebnconv5(hx)
-
-        hx6 = self.rebnconv6(hx5)
-
-
-        hx5d =  self.rebnconv5d(torch.cat((hx6,hx5),1))
-        hx5dup = _upsample_like(hx5d,hx4)
-
-        hx4d = self.rebnconv4d(torch.cat((hx5dup,hx4),1))
-        hx4dup = _upsample_like(hx4d,hx3)
-
-        hx3d = self.rebnconv3d(torch.cat((hx4dup,hx3),1))
-        hx3dup = _upsample_like(hx3d,hx2)
-
-        hx2d = self.rebnconv2d(torch.cat((hx3dup,hx2),1))
-        hx2dup = _upsample_like(hx2d,hx1)
-
-        hx1d = self.rebnconv1d(torch.cat((hx2dup,hx1),1))
-
-        return hx1d + hxin
-
-### RSU-5 ###
-class RSU5(nn.Module):#UNet05DRES(nn.Module):
-
-    def __init__(self, input_nc=3, mid_ch=12, output_nc=3,submodule=None, norm_layer=nn.BatchNorm2d, use_dropout=False):
-        super(RSU5,self).__init__()
-
-        self.rebnconvin = REBNCONV(input_nc, output_nc, dirate=1)
-
-        self.rebnconv1 = REBNCONV(output_nc, mid_ch, dirate=1)
-        self.pool1 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
-
-        self.rebnconv2 = REBNCONV(mid_ch,mid_ch,dirate=1)
-        self.pool2 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
-
-        self.rebnconv3 = REBNCONV(mid_ch,mid_ch,dirate=1)
-        self.pool3 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
-
-        self.rebnconv4 = REBNCONV(mid_ch,mid_ch,dirate=1)
-
-        self.rebnconv5 = REBNCONV(mid_ch,mid_ch,dirate=2)
-
-        self.rebnconv4d = REBNCONV(mid_ch*2,mid_ch,dirate=1)
-        self.rebnconv3d = REBNCONV(mid_ch*2,mid_ch,dirate=1)
-        self.rebnconv2d = REBNCONV(mid_ch*2,mid_ch,dirate=1)
-        self.rebnconv1d = REBNCONV(mid_ch * 2, output_nc, dirate=1)
-
-        self.norm1 = norm_layer(mid_ch)
-        self.dropout = nn.Dropout(0.5) if use_dropout else None
-        self.submodule = submodule
-
-    def forward(self,x):
-
-        hx = x
-
-        hxin = self.rebnconvin(hx)
-
-        hx1 = self.rebnconv1(hxin)
-        hx = self.pool1(hx1)
-
-        hx2 = self.rebnconv2(hx)
-        hx = self.pool2(hx2)
-
-        hx3 = self.rebnconv3(hx)
-        hx = self.pool3(hx3)
-
-        hx4 = self.rebnconv4(hx)
-
-        hx5 = self.rebnconv5(hx4)
-
-        hx4d = self.rebnconv4d(torch.cat((hx5,hx4),1))
-        hx4dup = _upsample_like(hx4d,hx3)
-
-        hx3d = self.rebnconv3d(torch.cat((hx4dup,hx3),1))
-        hx3dup = _upsample_like(hx3d,hx2)
-
-        hx2d = self.rebnconv2d(torch.cat((hx3dup,hx2),1))
-        hx2dup = _upsample_like(hx2d,hx1)
-
-        hx1d = self.rebnconv1d(torch.cat((hx2dup,hx1),1))
-
-        return hx1d + hxin
-
-### RSU-4 ###
-class RSU4(nn.Module):#UNet04DRES(nn.Module):
-
-    def __init__(self, input_nc=3, mid_ch=12, output_nc=3, submodule=None, norm_layer=nn.BatchNorm2d, use_dropout=False):
-        super(RSU4,self).__init__()
-
-        self.rebnconvin = REBNCONV(input_nc, output_nc, dirate=1)
-
-        self.rebnconv1 = REBNCONV(output_nc, mid_ch, dirate=1)
-        self.pool1 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
-
-        self.rebnconv2 = REBNCONV(mid_ch,mid_ch,dirate=1)
-        self.pool2 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
-
-        self.rebnconv3 = REBNCONV(mid_ch,mid_ch,dirate=1)
-
-        self.rebnconv4 = REBNCONV(mid_ch,mid_ch,dirate=2)
-
-        self.rebnconv3d = REBNCONV(mid_ch*2,mid_ch,dirate=1)
-        self.rebnconv2d = REBNCONV(mid_ch*2,mid_ch,dirate=1)
-        self.rebnconv1d = REBNCONV(mid_ch * 2, output_nc, dirate=1)
-
-        self.norm1 = norm_layer(mid_ch)
-        self.dropout = nn.Dropout(0.5) if use_dropout else None
-        self.submodule = submodule
-    def forward(self,x):
-
-        hx = x
-
-        hxin = self.rebnconvin(hx)
-
-        hx1 = self.rebnconv1(hxin)
-        hx = self.pool1(hx1)
-
-        hx2 = self.rebnconv2(hx)
-        hx = self.pool2(hx2)
-
-        hx3 = self.rebnconv3(hx)
-
-        hx4 = self.rebnconv4(hx3)
-
-        hx3d = self.rebnconv3d(torch.cat((hx4,hx3),1))
-        hx3dup = _upsample_like(hx3d,hx2)
-
-        hx2d = self.rebnconv2d(torch.cat((hx3dup,hx2),1))
-        hx2dup = _upsample_like(hx2d,hx1)
-
-        hx1d = self.rebnconv1d(torch.cat((hx2dup,hx1),1))
-
-        return hx1d + hxin
-
-### RSU-4F ###
-class RSU4F(nn.Module):#UNet04FRES(nn.Module):
-
-    def __init__(self, input_nc=3, mid_ch=12, output_nc=3, submodule=None, norm_layer=nn.BatchNorm2d, use_dropout=False):
-        super(RSU4F,self).__init__()
-
-        self.rebnconvin = REBNCONV(input_nc, output_nc, dirate=1)
-
-        self.rebnconv1 = REBNCONV(output_nc, mid_ch, dirate=1)
-        self.rebnconv2 = REBNCONV(mid_ch,mid_ch,dirate=2)
-        self.rebnconv3 = REBNCONV(mid_ch,mid_ch,dirate=4)
-
-        self.rebnconv4 = REBNCONV(mid_ch,mid_ch,dirate=8)
-
-        self.rebnconv3d = REBNCONV(mid_ch*2,mid_ch,dirate=4)
-        self.rebnconv2d = REBNCONV(mid_ch*2,mid_ch,dirate=2)
-        self.rebnconv1d = REBNCONV(mid_ch * 2, output_nc, dirate=1)
-
-        self.norm1 = norm_layer(mid_ch)
-        self.dropout = nn.Dropout(0.5) if use_dropout else None
-        self.submodule = submodule
-    def forward(self,x):
-
-        hx = x
-
-        hxin = self.rebnconvin(hx)
-
-        hx1 = self.rebnconv1(hxin)
-        hx2 = self.rebnconv2(hx1)
-        hx3 = self.rebnconv3(hx2)
-
-        hx4 = self.rebnconv4(hx3)
-
-        hx3d = self.rebnconv3d(torch.cat((hx4,hx3),1))
-        hx2d = self.rebnconv2d(torch.cat((hx3d,hx2),1))
-        hx1d = self.rebnconv1d(torch.cat((hx2d,hx1),1))
-
-        return hx1d + hxin
-
-
-##### U^2-Net ####
-class U2NET(nn.Module):
-
-    def __init__(self,in_ch=3,out_ch=1):
-        super(U2NET,self).__init__()
-
-        self.stage1 = RSU7(in_ch,32,64)
-        self.pool12 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
-
-        self.stage2 = RSU6(64,32,128)
-        self.pool23 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
-
-        self.stage3 = RSU5(128,64,256)
-        self.pool34 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
-
-        self.stage4 = RSU4(256,128,512)
-        self.pool45 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
-
-        self.stage5 = RSU4F(512,256,512)
-        self.pool56 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
-
-        self.stage6 = RSU4F(512,256,512)
-
-        # decoder
-        self.stage5d = RSU4F(1024,256,512)
-        self.stage4d = RSU4(1024,128,256)
-        self.stage3d = RSU5(512,64,128)
-        self.stage2d = RSU6(256,32,64)
-        self.stage1d = RSU7(128,16,64)
-
-        self.side1 = nn.Conv2d(64,out_ch,3,padding=1)
-        self.side2 = nn.Conv2d(64,out_ch,3,padding=1)
-        self.side3 = nn.Conv2d(128,out_ch,3,padding=1)
-        self.side4 = nn.Conv2d(256,out_ch,3,padding=1)
-        self.side5 = nn.Conv2d(512,out_ch,3,padding=1)
-        self.side6 = nn.Conv2d(512,out_ch,3,padding=1)
-
-        self.outconv = nn.Conv2d(6*out_ch,out_ch,1)
-
-    def forward(self,x):
-
-        hx = x
-
-        #stage 1
-        hx1 = self.stage1(hx)
-        hx = self.pool12(hx1)
-
-        #stage 2
-        hx2 = self.stage2(hx)
-        hx = self.pool23(hx2)
-
-        #stage 3
-        hx3 = self.stage3(hx)
-        hx = self.pool34(hx3)
-
-        #stage 4
-        hx4 = self.stage4(hx)
-        hx = self.pool45(hx4)
-
-        #stage 5
-        hx5 = self.stage5(hx)
-        hx = self.pool56(hx5)
-
-        #stage 6
-        hx6 = self.stage6(hx)
-        hx6up = _upsample_like(hx6,hx5)
-
-        #-------------------- decoder --------------------
-        hx5d = self.stage5d(torch.cat((hx6up,hx5),1))
-        hx5dup = _upsample_like(hx5d,hx4)
-
-        hx4d = self.stage4d(torch.cat((hx5dup,hx4),1))
-        hx4dup = _upsample_like(hx4d,hx3)
-
-        hx3d = self.stage3d(torch.cat((hx4dup,hx3),1))
-        hx3dup = _upsample_like(hx3d,hx2)
-
-        hx2d = self.stage2d(torch.cat((hx3dup,hx2),1))
-        hx2dup = _upsample_like(hx2d,hx1)
-
-        hx1d = self.stage1d(torch.cat((hx2dup,hx1),1))
-
-
-        #side output
-        d1 = self.side1(hx1d)
-
-        d2 = self.side2(hx2d)
-        d2 = _upsample_like(d2,d1)
-
-        d3 = self.side3(hx3d)
-        d3 = _upsample_like(d3,d1)
-
-        d4 = self.side4(hx4d)
-        d4 = _upsample_like(d4,d1)
-
-        d5 = self.side5(hx5d)
-        d5 = _upsample_like(d5,d1)
-
-        d6 = self.side6(hx6)
-        d6 = _upsample_like(d6,d1)
-
-        d0 = self.outconv(torch.cat((d1,d2,d3,d4,d5,d6),1))
-
-        return F.sigmoid(d0), F.sigmoid(d1), F.sigmoid(d2), F.sigmoid(d3), F.sigmoid(d4), F.sigmoid(d5), F.sigmoid(d6)
-
-
-# Step 2: 定义CycleGAN中的生成器
-# 定义U2NET生成器
-class U2NETGenerator(nn.Module):
-    def __init__(self, input_nc=3, output_nc=3, num_downs=7, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False):
-        super(U2NETGenerator, self).__init__()
-
-        # 初始化 u2net_block
-        u2net_blocks = []
-
-        # 我们首先添加RSU7模块
-        u2net_blocks.append(
-            RSU7(input_nc=input_nc, mid_ch=ngf * 8, output_nc=ngf * 8, submodule=None,
-                 norm_layer=norm_layer, use_dropout=use_dropout)
+# class ResnetGenerator(nn.Module):
+#     """Resnet-based generator that consists of Resnet blocks between a few downsampling/upsampling operations.
+#
+#     We adapt Torch code and idea from Justin Johnson's neural style transfer project(https://github.com/jcjohnson/fast-neural-style)
+#     """
+#
+#     def __init__(self, input_nc, output_nc, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False, n_blocks=6, padding_type='reflect'):
+#         """Construct a Resnet-based generator
+#
+#         Parameters:
+#             input_nc (int)      -- the number of channels in input images
+#             output_nc (int)     -- the number of channels in output images
+#             ngf (int)           -- the number of filters in the last conv layer
+#             norm_layer          -- normalization layer
+#             use_dropout (bool)  -- if use dropout layers
+#             n_blocks (int)      -- the number of ResNet blocks
+#             padding_type (str)  -- the name of padding layer in conv layers: reflect | replicate | zero
+#         """
+#         assert(n_blocks >= 0)
+#         super(ResnetGenerator, self).__init__()
+#         if type(norm_layer) == functools.partial:
+#             use_bias = norm_layer.func == nn.InstanceNorm2d
+#         else:
+#             use_bias = norm_layer == nn.InstanceNorm2d
+#
+#         model = [nn.ReflectionPad2d(3),
+#                  nn.Conv2d(input_nc, ngf, kernel_size=7, padding=0, bias=use_bias),
+#                  norm_layer(ngf),
+#                  nn.ReLU(True)]
+#
+#         n_downsampling = 2
+#         for i in range(n_downsampling):  # add downsampling layers
+#             mult = 2 ** i
+#             model += [nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=3, stride=2, padding=1, bias=use_bias),
+#                       norm_layer(ngf * mult * 2),
+#                       nn.ReLU(True)]
+#
+#         mult = 2 ** n_downsampling
+#         for i in range(n_blocks):       # add ResNet blocks
+#
+#             model += [ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)]
+#
+#         for i in range(n_downsampling):  # add upsampling layers
+#             mult = 2 ** (n_downsampling - i)
+#             model += [nn.ConvTranspose2d(ngf * mult, int(ngf * mult / 2),
+#                                          kernel_size=3, stride=2,
+#                                          padding=1, output_padding=1,
+#                                          bias=use_bias),
+#                       norm_layer(int(ngf * mult / 2)),
+#                       nn.ReLU(True)]
+#         model += [nn.ReflectionPad2d(3)]
+#         model += [nn.Conv2d(ngf, output_nc, kernel_size=7, padding=0)]
+#         model += [nn.Tanh()]
+#
+#         self.model = nn.Sequential(*model)
+#
+#     def forward(self, input):
+#         """Standard forward"""
+#         return self.model(input)
+import functools
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+# 假设 Bottle2neck 类已经定义，作为 Res2Net 的一个 block
+# ...
+# 定义ResidualBlock
+class ResidualBlock(nn.Module):
+    def __init__(self, channels):
+        super(ResidualBlock, self).__init__()
+        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
+        self.bn1 = nn.BatchNorm2d(channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
+        self.bn2 = nn.BatchNorm2d(channels)
+
+    def forward(self, x):
+        identity = x
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out += identity
+        out = self.relu(out)
+        return out
+
+# 定义CBAM模块
+class CBAM(nn.Module):
+    def __init__(self, channels, reduction=16):
+        super(CBAM, self).__init__()
+        self.channels = channels
+        self.reduction = reduction
+
+        self.channel_attention = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(channels, channels // reduction, kernel_size=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(channels // reduction, channels, kernel_size=1),
+            nn.Sigmoid()
         )
 
-
-        u2net_blocks.append(
-            RSU6(input_nc=ngf * 8, mid_ch=ngf * 8, output_nc=ngf * 4, submodule=u2net_blocks[-1],
-                     norm_layer=norm_layer, use_dropout=use_dropout)
-            )
-
-        u2net_blocks.append(
-            RSU5(input_nc=ngf * 4, mid_ch=ngf * 8, output_nc=ngf * 2, submodule=u2net_blocks[-1],
-                 norm_layer=norm_layer)
+        self.spatial_attention = nn.Sequential(
+            nn.Conv2d(channels, 1, kernel_size=7, padding=3),
+            nn.Sigmoid()
         )
 
-        u2net_blocks.append(
-            RSU4(input_nc=ngf * 2, mid_ch=ngf * 4, output_nc=ngf * 1, submodule=u2net_blocks[-1],
-                 norm_layer=norm_layer)
-        )
-        u2net_blocks.append(
-            RSU4F(input_nc=ngf, mid_ch=ngf * 2, output_nc=ngf, submodule=u2net_blocks[-1], norm_layer=norm_layer)
-        )
+    def forward(self, x):
+        # 通道注意力
+        channel_att = self.channel_attention(x)
+        x = x * channel_att
 
-        # 在模型的最后一层
-        u2net_blocks.append(nn.Conv2d(ngf, output_nc, kernel_size=3, stride=1, padding=1))
-        self.model = nn.Sequential(*u2net_blocks)
+        # 空间注意力
+        spatial_att = self.spatial_attention(x)
+        x = x * spatial_att
+
+        return x
+class ResnetGenerator(nn.Module):
+    def __init__(self, input_nc, output_nc, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False, n_blocks=6, padding_type='reflect'):
+        assert(n_blocks >= 0)
+        super(ResnetGenerator, self).__init__()
+        if type(norm_layer) == functools.partial:
+            use_bias = norm_layer.func == nn.InstanceNorm2d
+        else:
+            use_bias = norm_layer == nn.InstanceNorm2d
+
+        model = [nn.ReflectionPad2d(3),
+                 nn.Conv2d(input_nc, ngf, kernel_size=7, padding=0, bias=use_bias),
+                 norm_layer(ngf),
+                 nn.ReLU(True)]
+        # model = [nn.Conv2d(input_nc, ngf, kernel_size=7, padding=0, bias=use_bias),
+        #          TripletAttention(),  # 添加Triplet Attention在第一层卷积后
+        #          norm_layer(ngf),
+        #          nn.ReLU(True)]
+        n_downsampling = 2
+        for i in range(n_downsampling):
+            mult = 2 ** i
+            model += [nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=3, stride=2, padding=1, bias=use_bias),
+                      norm_layer(ngf * mult * 2),
+                      nn.ReLU(True)]
+
+        mult = 2 ** n_downsampling
+        for i in range(n_blocks):
+            # 使用 Bottle2neck 替换 ResnetBlock
+            # model += [Bottle2neck(ngf * mult, ngf * mult)]
+            model += [Res2NetBlock(ngf * mult, ngf * mult)]
+        for i in range(n_downsampling):
+            mult = 2 ** (n_downsampling - i)
+            model += [nn.ConvTranspose2d(ngf * mult, int(ngf * mult / 2),
+                                         kernel_size=3, stride=2,
+                                         padding=1, output_padding=1,
+                                         bias=use_bias),
+                      norm_layer(int(ngf * mult / 2)),
+                      nn.ReLU(True)]
+        model += [nn.ReflectionPad2d(3)]
+        model += [nn.Conv2d(ngf, output_nc, kernel_size=7,  padding=0)]
+        model += [nn.Tanh()]
+        # model += [nn.ReflectionPad2d(3),
+        #           nn.Conv2d(ngf, output_nc, kernel_size=3, padding=0),
+        #           TripletAttention(),  # 添加Triplet Attention在最后一层卷积前
+        #           nn.Tanh()]
+        # self.model = nn.Sequential(*model)
+        # # 嵌入CBAM模块到生成器的残差块
+        # self.residual_blocks = nn.Sequential(
+        #     ResidualBlock(64),
+        #     CBAM(64),  # 嵌入CBAM模块
+        #     ResidualBlock(64),
+        #     CBAM(64)  # 嵌入CBAM模块
+        # )
+
+        self.model = nn.Sequential(*model)
+
     def forward(self, input):
-        return torch.tanh(self.model(input))
+        return self.model(input)
+
+
+
+# class Bottle2neck(nn.Module):
+#     expansion = 4
+#
+#     def __init__(self, inplanes, planes, stride=1, downsample=None, baseWidth=26, scale=4, stype='normal'):
+        """ Constructor
+        Args:
+            inplanes: input channel dimensionality
+            planes: output channel dimensionality
+            stride: conv stride. Replaces pooling layer.
+            downsample: None when stride = 1
+            baseWidth: basic width of conv3x3
+            scale: number of scale.
+            type: 'normal': normal set. 'stage': first block of a new stage.
+        """
+#         super(Bottle2neck, self).__init__()
+#
+#         width = int(math.floor(planes * (baseWidth / 64.0)))
+#         self.conv1 = nn.Conv2d(inplanes, width * scale, kernel_size=1, bias=False)
+#         self.bn1 = nn.BatchNorm2d(width * scale)
+#
+#         if scale == 1:
+#             self.nums = 1
+#         else:
+#             self.nums = scale - 1
+#         if stype == 'stage':
+#             self.pool = nn.AvgPool2d(kernel_size=3, stride=stride, padding=1)
+#         convs = []
+#         bns = []
+#         for i in range(self.nums):
+#             convs.append(nn.Conv2d(width, width, kernel_size=3, stride=stride, padding=1, bias=False))
+#             bns.append(nn.BatchNorm2d(width))
+#         self.convs = nn.ModuleList(convs)
+#         self.bns = nn.ModuleList(bns)
+#
+#         self.conv3 = nn.Conv2d(width * scale, planes * self.expansion, kernel_size=1, bias=False)
+#         self.bn3 = nn.BatchNorm2d(planes * self.expansion)
+#
+#         self.relu = nn.ReLU(inplace=True)
+#         self.downsample = downsample
+#         self.stype = stype
+#         self.scale = scale
+#         self.width = width
+#
+#     def forward(self, x):
+#         residual = x
+#
+#         out = self.conv1(x)
+#         out = self.bn1(out)
+#         out = self.relu(out)
+#
+#         spx = torch.split(out, self.width, 1)
+#         for i in range(self.nums):
+#             if i == 0 or self.stype == 'stage':
+#                 sp = spx[i]
+#             else:
+#                 sp = sp + spx[i]
+#             sp = self.convs[i](sp)
+#             sp = self.relu(self.bns[i](sp))
+#             if i == 0:
+#                 out = sp
+#             else:
+#                 out = torch.cat((out, sp), 1)
+#         if self.scale != 1 and self.stype == 'normal':
+#             out = torch.cat((out, spx[self.nums]), 1)
+#         elif self.scale != 1 and self.stype == 'stage':
+#             out = torch.cat((out, self.pool(spx[self.nums])), 1)
+#
+#         out = self.conv3(out)
+#         out = self.bn3(out)
+#
+#         if self.downsample is not None:
+#             residual = self.downsample(x)
+#
+#         out += residual
+#         out = self.relu(out)
+#
+#         return out
+class Res2NetBlock(nn.Module):
+    def __init__(self, inplanes, outplanes, scales=4):
+        super(Res2NetBlock, self).__init__()
+
+        if outplanes % scales != 0:  # 输出通道数为4的倍数
+            raise ValueError('Planes must be divisible by scales')
+
+        self.scales = scales
+        # 1*1的卷积层
+        self.inconv = nn.Sequential(
+            nn.Conv2d(inplanes, 32, 1, 1, 0),
+            nn.BatchNorm2d(32)
+        )
+        # 3*3的卷积层，一共有3个卷积层和3个BN层
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(8, 16, 3, 1, 1),
+            nn.BatchNorm2d(16)
+        )
+        self.conv2 = nn.Sequential(
+            nn.Conv2d(8, 1, 3, 1, 1),
+            nn.BatchNorm2d(1)
+        )
+        self.conv3 = nn.Sequential(
+            nn.Conv2d(8, 1, 3, 1, 1),
+            nn.BatchNorm2d(1)
+        )
+        # 1*1的卷积层
+        self.conv4 = nn.Sequential(
+            nn.Conv2d(56, 1, 1, 1, 0),
+            nn.BatchNorm2d(1),
+            nn.ReLU(inplace=True)
+        )
+        self.outconv = nn.Sequential(
+            nn.Conv2d(56, 1, 1, 1, 0),
+            nn.BatchNorm2d(1),
+            nn.ReLU(inplace=True)
+        )
+    def forward(self, x):
+        input = x
+        x = self.inconv(x)
+
+        # scales个部分
+        xs = torch.chunk(x, self.scales, 1)
+        ys = []
+        ys.append(xs[0])
+        ys.append(function.relu(self.conv1(xs[1])))
+        ys.append(function.relu(self.conv2(xs[2]) + ys[1]))
+        ys.append(function.relu(self.conv3(xs[3]) + ys[2]))
+        y = torch.cat(ys, 1)
+
+        y = self.outconv(y)
+
+        output = function.relu(y + input)
+
+        return output
+
+
+
+
+# class ResnetBlock(nn.Module):
+#     """Define a Resnet block"""
+#
+#     def __init__(self, dim, padding_type, norm_layer, use_dropout, use_bias):
+#         """Initialize the Resnet block
+#
+#         A resnet block is a conv block with skip connections
+#         We construct a conv block with build_conv_block function,
+#         and implement skip connections in <forward> function.
+#         Original Resnet paper: https://arxiv.org/pdf/1512.03385.pdf
+#         """
+#         super(ResnetBlock, self).__init__()
+#         self.conv_block = self.build_conv_block(dim, padding_type, norm_layer, use_dropout, use_bias)
+#
+#     def build_conv_block(self, dim, padding_type, norm_layer, use_dropout, use_bias):
+#         """Construct a convolutional block.
+#
+#         Parameters:
+#             dim (int)           -- the number of channels in the conv layer.
+#             padding_type (str)  -- the name of padding layer: reflect | replicate | zero
+#             norm_layer          -- normalization layer
+#             use_dropout (bool)  -- if use dropout layers.
+#             use_bias (bool)     -- if the conv layer uses bias or not
+#
+#         Returns a conv block (with a conv layer, a normalization layer, and a non-linearity layer (ReLU))
+#         """
+#         conv_block = []
+#         p = 0
+#         if padding_type == 'reflect':
+#             conv_block += [nn.ReflectionPad2d(1)]
+#         elif padding_type == 'replicate':
+#             conv_block += [nn.ReplicationPad2d(1)]
+#         elif padding_type == 'zero':
+#             p = 1
+#         else:
+#             raise NotImplementedError('padding [%s] is not implemented' % padding_type)
+#
+#         conv_block += [nn.Conv2d(dim, dim, kernel_size=3, padding=p, bias=use_bias), norm_layer(dim), nn.ReLU(True)]
+#         if use_dropout:
+#             conv_block += [nn.Dropout(0.5)]
+#
+#         p = 0
+#         if padding_type == 'reflect':
+#             conv_block += [nn.ReflectionPad2d(1)]
+#         elif padding_type == 'replicate':
+#             conv_block += [nn.ReplicationPad2d(1)]
+#         elif padding_type == 'zero':
+#             p = 1
+#         else:
+#             raise NotImplementedError('padding [%s] is not implemented' % padding_type)
+#         conv_block += [nn.Conv2d(dim, dim, kernel_size=3, padding=p, bias=use_bias), norm_layer(dim)]
+#
+#         return nn.Sequential(*conv_block)
+#
+#     def forward(self, x):
+#         """Forward function (with skip connections)"""
+#         out = x + self.conv_block(x)  # add skip connections
+#         return out
+
+
+class UnetGenerator(nn.Module):
+    """Create a Unet-based generator"""
+
+    def __init__(self, input_nc, output_nc, num_downs, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False):
+        """Construct a Unet generator
+        Parameters:
+            input_nc (int)  -- the number of channels in input images
+            output_nc (int) -- the number of channels in output images
+            num_downs (int) -- the number of downsamplings in UNet. For example, # if |num_downs| == 7,
+                                image of size 128x128 will become of size 1x1 # at the bottleneck
+            ngf (int)       -- the number of filters in the last conv layer
+            norm_layer      -- normalization layer
+
+        We construct the U-Net from the innermost layer to the outermost layer.
+        It is a recursive process.
+        """
+        super(UnetGenerator, self).__init__()
+        # construct unet structure
+        unet_block = UnetSkipConnectionBlock(ngf * 8, ngf * 8, input_nc=None, submodule=None, norm_layer=norm_layer, innermost=True)  # add the innermost layer
+        for i in range(num_downs - 5):          # add intermediate layers with ngf * 8 filters
+            unet_block = UnetSkipConnectionBlock(ngf * 8, ngf * 8, input_nc=None, submodule=unet_block, norm_layer=norm_layer, use_dropout=use_dropout)
+        # gradually reduce the number of filters from ngf * 8 to ngf
+        unet_block = UnetSkipConnectionBlock(ngf * 4, ngf * 8, input_nc=None, submodule=unet_block, norm_layer=norm_layer)
+        unet_block = UnetSkipConnectionBlock(ngf * 2, ngf * 4, input_nc=None, submodule=unet_block, norm_layer=norm_layer)
+        unet_block = UnetSkipConnectionBlock(ngf, ngf * 2, input_nc=None, submodule=unet_block, norm_layer=norm_layer)
+        self.model = UnetSkipConnectionBlock(output_nc, ngf, input_nc=input_nc, submodule=unet_block, outermost=True, norm_layer=norm_layer)  # add the outermost layer
+
+    def forward(self, input):
+        """Standard forward"""
+        return self.model(input)
+
+
+class UnetSkipConnectionBlock(nn.Module):
+    """Defines the Unet submodule with skip connection.
+        X -------------------identity----------------------
+        |-- downsampling -- |submodule| -- upsampling --|
+    """
+
+    def __init__(self, outer_nc, inner_nc, input_nc=None,
+                 submodule=None, outermost=False, innermost=False, norm_layer=nn.BatchNorm2d, use_dropout=False):
+        """Construct a Unet submodule with skip connections.
+
+        Parameters:
+            outer_nc (int) -- the number of filters in the outer conv layer
+            inner_nc (int) -- the number of filters in the inner conv layer
+            input_nc (int) -- the number of channels in input images/features
+            submodule (UnetSkipConnectionBlock) -- previously defined submodules
+            outermost (bool)    -- if this module is the outermost module
+            innermost (bool)    -- if this module is the innermost module
+            norm_layer          -- normalization layer
+            use_dropout (bool)  -- if use dropout layers.
+        """
+        super(UnetSkipConnectionBlock, self).__init__()
+        self.outermost = outermost
+        if type(norm_layer) == functools.partial:
+            use_bias = norm_layer.func == nn.InstanceNorm2d
+        else:
+            use_bias = norm_layer == nn.InstanceNorm2d
+        if input_nc is None:
+            input_nc = outer_nc
+        downconv = nn.Conv2d(input_nc, inner_nc, kernel_size=4,
+                             stride=2, padding=1, bias=use_bias)
+        downrelu = nn.LeakyReLU(0.2, True)
+        downnorm = norm_layer(inner_nc)
+        uprelu = nn.ReLU(True)
+        upnorm = norm_layer(outer_nc)
+
+        if outermost:
+            upconv = nn.ConvTranspose2d(inner_nc * 2, outer_nc,
+                                        kernel_size=4, stride=2,
+                                        padding=1)
+            down = [downconv]
+            up = [uprelu, upconv, nn.Tanh()]
+            model = down + [submodule] + up
+        elif innermost:
+            upconv = nn.ConvTranspose2d(inner_nc, outer_nc,
+                                        kernel_size=4, stride=2,
+                                        padding=1, bias=use_bias)
+            down = [downrelu, downconv]
+            up = [uprelu, upconv, upnorm]
+            model = down + up
+        else:
+            upconv = nn.ConvTranspose2d(inner_nc * 2, outer_nc,
+                                        kernel_size=4, stride=2,
+                                        padding=1, bias=use_bias)
+            down = [downrelu, downconv, downnorm]
+            up = [uprelu, upconv, upnorm]
+
+            if use_dropout:
+                model = down + [submodule] + up + [nn.Dropout(0.5)]
+            else:
+                model = down + [submodule] + up
+
+        self.model = nn.Sequential(*model)
+
+    def forward(self, x):
+        if self.outermost:
+            return self.model(x)
+        else:   # add skip connections
+            return torch.cat([x, self.model(x)], 1)
 
 
 class NLayerDiscriminator(nn.Module):
@@ -841,6 +839,8 @@ class NLayerDiscriminator(nn.Module):
     def forward(self, input):
         """Standard forward."""
         return self.model(input)
+
+
 class PixelDiscriminator(nn.Module):
     """Defines a 1x1 PatchGAN discriminator (pixelGAN)"""
 
