@@ -10,7 +10,7 @@ Aiming at the problems of information loss and lack of data sets in some special
 ## 3. Image high-resolution imaging method based on improved residual generator
 ### 3.1 Overall framework
 Train the data using small sample learning methods, and obtain the target image after passing through an enhanced Res2net feature extraction module and an embedded TripletAttribute feature enhancement module.  
-The following diagram is the [overall structure diagram](img\OverallFramework.png)
+The following diagram is the ![overall structure diagram](img/OverallFramework.png)
 
 
 
