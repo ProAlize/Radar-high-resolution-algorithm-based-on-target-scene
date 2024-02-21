@@ -22,14 +22,14 @@ We chose to use Res2net to replace the original Resnet generator, which can incr
 
 ### 3.3 [TripletAttention attention](https://github.com/zhouhaoyi/TripletAttention)
 For input tensors, triple attention utilizes rotation operations and residual transformation to establish interdependencies between dimensions, and encodes inter channel and spatial information with negligible computational overhead. Compared with other attention mechanisms, triple attention improves efficiency with reduced parameter count
-![]()
+
 
 
 ### 3.4 Virtual Dataset
 In order to compensate for the shortage of datasets, Unity was used to construct a virtual scene dataset. The experimental results showed that the addition of virtual datasets helps to improve the accuracy of the model.  
 
 Shows the left side as the Vaihingen dataset and the right side as the virtual dataset
-![VirtualDatasets](img\VirtualDatasets.png)
+![VirtualDatasets](img\VirtualDatasets.png "VirtualDatasets")
 
 ### 3.5 Partial Framework Diagram
-![PartialFrameworkDiagram](img\PartialFrameworkDiagram.png)
+![PartialFrameworkDiagram](img\PartialFrameworkDiagram.png "PartialFrameworkDiagram")
