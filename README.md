@@ -29,7 +29,7 @@ For input tensors, triple attention utilizes rotation operations and residual tr
 In order to compensate for the shortage of datasets, Unity was used to construct a virtual scene dataset. The experimental results showed that the addition of virtual datasets helps to improve the accuracy of the model.  
 
 Shows the left side as the Vaihingen dataset and the right side as the virtual dataset
-![VirtualDatasets](img\VirtualDatasets.png "VirtualDatasets")
+![VirtualDatasets](img/VirtualDatasets.png "VirtualDatasets")
 
 ### 3.5 Partial Framework Diagram
-![PartialFrameworkDiagram](img\PartialFrameworkDiagram.png "PartialFrameworkDiagram")
+![PartialFrameworkDiagram](img/PartialFrameworkDiagram.png "PartialFrameworkDiagram")
