@@ -4,7 +4,7 @@ This project is the 17th batch of college student innovation projects of Northea
 
 The responsible person and core members are [Tianshuo Yuan](https://github.com/ProAlize) and [Wenyan Jiang](https://github.com/comradejiang).
 
-## 2. Abstract
+## 2. Abstract 
 Aiming at the problems of information loss and lack of data sets in some special scenarios in multi-modal image imaging, a high-resolution image imaging method based on an improved residual generator is proposed and incorporated into the produced virtual data set for effect assistance. First, images of different modalities are processed by cropping and filling, and then the images are subjected to Gaussian blur processing. The ResNet module in the [CycleGAN](https://github.com/junyanz/pytorch-CycleGAN-and-pix2pix) residual generator is replaced by the [Res2net](https://github.com/Res2Net/Res2Net-PretrainedModels) module and the [TripletAttention attention](https://github.com/zhouhaoyi/TripletAttention) mechanism module is embedded in the last layer of the encoder. Use the improved CycleGAN as the backbone network to extract and fuse features of images of different modalities. Use the [Vaihingen dataset](https://www.isprs.org/education/benchmarks/UrbanSemLab/default.aspx) to supplement the virtual dataset to train the model using a small sample learning method. Finally, on the [SEN1-2 dataset](https://github.com/YuChuang1205/SEN1-2-patch-dataset), it is compared with the common Algorithms are compared. Experimental results show that the accuracy of the model using the TripletAttention attention mechanism and adding a virtual data set to assist training has been improved, and the model is more robust.
 
 ## 3. Image high-resolution imaging method based on improved residual generator
